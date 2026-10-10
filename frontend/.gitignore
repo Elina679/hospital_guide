@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.*
+.trae/
+.backup/
+vite-dev.log
+vite-dev.err
+.backup/
+vite-dev.log
+vite-dev.err
