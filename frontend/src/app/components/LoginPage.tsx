@@ -95,12 +95,6 @@ export function LoginPage({ onLogin, onNavigate }: LoginPageProps) {
         </div>
       </div>
 
-      {/* Demo Hint */}
-      <div className="text-center mt-8 relative z-10 [@media(max-height:700px)]:mt-5">
-        <p className="text-xs text-slate-400 bg-white/80 backdrop-blur-sm px-4 py-2 rounded-full inline-block">
-          {t('demoHint', language)}
-        </p>
-      </div>
     </div>
   );
 }

@@ -11,6 +11,12 @@ const FLOOR_HEIGHT = 3;
 const ACTIVE_FLOOR_OPACITY = 1;
 const FOCUSED_ROUTE_OPACITY = 0.96;
 const PATH_ELEVATION = 0.06;
+// 底部导航信息面板占用的空间：4rem 底部导航 + 220px 信息面板。
+const LABEL_PANEL_RESERVED_SPACE = 284;
+const BUILDING_HIGHLIGHT_COLORS = {
+  start: 0xef4444,
+  end: 0xb91c1c,
+} as const;
 // 相机位置拉远，保证整个楼层平面（±10.2 × ±3.94）在窄屏容器内完整可见
 const CAMERA_POSITION = new THREE.Vector3(0, 28, 40);
 const ENABLE_WEBXR = false;
@@ -62,6 +68,8 @@ export interface DepartmentLabel {
 
 export function Hospital3DMap({
   pathPoints = [],
+  startPoint,
+  endPoint,
   currentFloor = 1,
   onFloorChange,
   showControls = true,
@@ -77,6 +85,7 @@ export function Hospital3DMap({
   const labelRendererRef = useRef<CSS2DRenderer | null>(null);
   const labelGroupsRef = useRef<Map<number, THREE.Group>>(new Map());
   const pathGroupRef = useRef<THREE.Group | null>(null);
+  const buildingHighlightGroupRef = useRef<THREE.Group | null>(null);
   const xrSessionRef = useRef<XRSession | null>(null);
   const animationFrameIdRef = useRef<number | null>(null);
   const isMountedRef = useRef(true);
@@ -212,6 +221,10 @@ export function Hospital3DMap({
       group.visible = floor === focusFloor;
     });
 
+    buildingHighlightGroupRef.current?.children.forEach((highlight) => {
+      highlight.visible = highlight.userData.floor === focusFloor;
+    });
+
     syncCameraTarget();
   };
 
@@ -316,6 +329,7 @@ export function Hospital3DMap({
       floorObjectsRef.current.set(floor, object);
     });
 
+    createBuildingHighlights(startPoint, endPoint);
     updateFloorVisibility();
     setMountedState(setIsLoading, false);
   };
@@ -330,6 +344,110 @@ export function Hospital3DMap({
     pathGroupRef.current = null;
   };
 
+  // 清除旧的起点/终点覆盖网格，并释放它们专用的几何体和材质。
+  const clearBuildingHighlights = () => {
+    if (!sceneRef.current || !buildingHighlightGroupRef.current) {
+      return;
+    }
+
+    sceneRef.current.remove(buildingHighlightGroupRef.current);
+    disposeObject(buildingHighlightGroupRef.current);
+    buildingHighlightGroupRef.current = null;
+  };
+
+  // 在当前楼层模型中按坐标寻找距离最近的功能建筑网格。
+  const findBuildingAtPoint = (point: PathPoint) => {
+    const floorObject = floorObjectsRef.current.get(point.floor);
+    if (!floorObject) {
+      return null;
+    }
+
+    const ignoredMaterials = new Set(['白色', 'road', 'ball', 'r', '字体', '字', '材质']);
+    const target = new THREE.Vector3(point.x, getFloorOffset(point.floor), point.y);
+    let closestMesh: THREE.Mesh | null = null;
+    let closestDistance = Number.POSITIVE_INFINITY;
+
+    floorObject.traverse((child) => {
+      if (!(child instanceof THREE.Mesh) || !child.visible) {
+        return;
+      }
+
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      if (materials.every((material) => ignoredMaterials.has(material.name))) {
+        return;
+      }
+
+      const box = new THREE.Box3().setFromObject(child);
+      const size = box.getSize(new THREE.Vector3());
+      if (size.x > 15 || size.z > 6 || size.y < 0.05) {
+        return;
+      }
+
+      const center = box.getCenter(new THREE.Vector3());
+      const distance = Math.hypot(center.x - target.x, center.z - target.z);
+      if (distance < closestDistance) {
+        closestMesh = child;
+        closestDistance = distance;
+      }
+    });
+
+    return closestMesh;
+  };
+
+  // 用独立的半透明覆盖网格标亮起点和终点，避免修改模型共享材质。
+  const createBuildingHighlights = (start?: PathPoint, end?: PathPoint) => {
+    if (!sceneRef.current) {
+      return;
+    }
+
+    clearBuildingHighlights();
+
+    const highlightGroup = new THREE.Group();
+    highlightGroup.userData = { type: 'building_highlights' };
+    const highlightedMeshes = new Set<THREE.Mesh>();
+
+    [
+      { point: start, color: BUILDING_HIGHLIGHT_COLORS.start, floor: start?.floor },
+      { point: end, color: BUILDING_HIGHLIGHT_COLORS.end, floor: end?.floor },
+    ].forEach(({ point, color, floor }) => {
+      if (!point) {
+        return;
+      }
+
+      const building = findBuildingAtPoint(point);
+      if (!building || highlightedMeshes.has(building)) {
+        return;
+      }
+
+      building.updateWorldMatrix(true, false);
+      const highlight = new THREE.Mesh(
+        building.geometry.clone(),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.9,
+          depthWrite: false,
+          depthTest: false,
+          side: THREE.DoubleSide,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -1,
+        })
+      );
+      highlight.matrixAutoUpdate = false;
+      highlight.matrix.copy(building.matrixWorld);
+      highlight.renderOrder = 20;
+      highlight.userData.floor = floor;
+      highlightGroup.add(highlight);
+      highlightedMeshes.add(building);
+    });
+
+    if (highlightGroup.children.length > 0) {
+      sceneRef.current.add(highlightGroup);
+      buildingHighlightGroupRef.current = highlightGroup;
+    }
+  };
+
   // 后端的平面 y 来自 OBJ 的 Z 坐标，保持原方向，不做镜像翻转。
   const pointToVector = (point: PathPoint) =>
     new THREE.Vector3(
@@ -340,6 +458,29 @@ export function Hospital3DMap({
 
   const getRouteOpacityForFloor = (floor: number) => {
     return floor === focusFloor ? FOCUSED_ROUTE_OPACITY : 0;
+  };
+
+  const createRouteSegment = (start: THREE.Vector3, end: THREE.Vector3, opacity: number) => {
+    const direction = end.clone().sub(start);
+    const length = direction.length();
+    if (length === 0) {
+      return null;
+    }
+
+    const segment = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.1, 0.1, length, 8),
+      new THREE.MeshBasicMaterial({
+        color: 0x6d9eb8,
+        transparent: true,
+        opacity,
+      })
+    );
+    segment.position.copy(start).add(end).multiplyScalar(0.5);
+    segment.quaternion.setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      direction.normalize()
+    );
+    return segment;
   };
 
   const renderFrame = () => {
@@ -439,16 +580,10 @@ export function Hospital3DMap({
       const endVector = pointToVector(end);
       const segmentOpacity = start.floor === focusFloor ? FOCUSED_ROUTE_OPACITY : 0;
 
-      const line = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([startVector, endVector]),
-      new THREE.LineBasicMaterial({
-        color: 0x6d9eb8,
-        transparent: true,
-        opacity: segmentOpacity,
-      })
-    );
-
-      group.add(line);
+      const segment = createRouteSegment(startVector, endVector, segmentOpacity);
+      if (segment) {
+        group.add(segment);
+      }
   }
 
     sceneRef.current.add(group);
@@ -506,7 +641,7 @@ export function Hospital3DMap({
         el.textContent = label.name;
         el.style.position = 'absolute';
         el.style.transform = 'translate(-50%, -50%)';
-        el.style.fontSize = '18px';
+        el.style.fontSize = '14px';
         el.style.color = '#1e293b';
         el.style.background = 'rgba(255,255,255,0.94)';
         el.style.padding = '2px 8px';
@@ -637,6 +772,8 @@ export function Hospital3DMap({
     labelRenderer.domElement.style.top = '0';
     labelRenderer.domElement.style.left = '0';
     labelRenderer.domElement.style.pointerEvents = 'none';
+    labelRenderer.domElement.style.zIndex = '1';
+    labelRenderer.domElement.style.clipPath = `inset(0 0 ${LABEL_PANEL_RESERVED_SPACE}px 0)`;
     labelRendererRef.current = labelRenderer;
 
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -703,6 +840,7 @@ export function Hospital3DMap({
 
       window.removeEventListener('resize', handleResize);
       clearPathGroup();
+      clearBuildingHighlights();
       clearFloorLabels();
       floorObjectsRef.current.forEach((object) => disposeObject(object));
       floorObjectsRef.current.clear();
@@ -768,6 +906,10 @@ export function Hospital3DMap({
   useEffect(() => {
     drawNavigationPath(pathPoints);
   }, [pathPoints, currentFloor]);
+
+  useEffect(() => {
+    createBuildingHighlights(startPoint, endPoint);
+  }, [startPoint, endPoint, currentFloor]);
 
   useEffect(() => {
     createFloorLabels(locationLabels);
