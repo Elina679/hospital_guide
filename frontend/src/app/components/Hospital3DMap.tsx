@@ -14,8 +14,8 @@ const PATH_ELEVATION = 0.06;
 // 底部导航信息面板占用的空间：4rem 底部导航 + 220px 信息面板。
 const LABEL_PANEL_RESERVED_SPACE = 284;
 const BUILDING_HIGHLIGHT_COLORS = {
-  start: 0xef4444,
-  end: 0xb91c1c,
+  start: 0x22c55e,
+  end: 0xef4444,
 } as const;
 // 相机位置拉远，保证整个楼层平面（±10.2 × ±3.94）在窄屏容器内完整可见
 const CAMERA_POSITION = new THREE.Vector3(0, 28, 40);
@@ -438,6 +438,7 @@ export function Hospital3DMap({
       highlight.matrix.copy(building.matrixWorld);
       highlight.renderOrder = 20;
       highlight.userData.floor = floor;
+      highlight.visible = floor === focusFloor;
       highlightGroup.add(highlight);
       highlightedMeshes.add(building);
     });
