@@ -18,14 +18,19 @@ async def get_locations(
     type: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """获取位置列表，支持按楼层和类型筛选"""
+    """获取位置列表，支持按楼层和类型筛选
+    默认不返回 type='grid' 的导航走廊点（仅供路径规划内部使用），
+    前端沿用原有渲染；显式传 type=grid 时仍可获取。
+    """
     query = db.query(Location)
-    
+
     if floor:
         query = query.filter(Location.floor == floor)
     if type:
         query = query.filter(Location.type == type)
-    
+    else:
+        query = query.filter(Location.type != "grid")
+
     locations = query.all()
     return locations
 
@@ -43,31 +48,28 @@ async def calculate_path(
     target_id: int,
     db: Session = Depends(get_db)
 ):
-    """计算从起点到终点的路径"""
-    start_loc = db.query(Location).filter(Location.id == start_id).first()
-    target_loc = db.query(Location).filter(Location.id == target_id).first()
+    """原有的路径计算接口（保持兼容）"""
+    # 调用智能算法，使用默认用户类型
+    finder = create_path_finder(db)
+    path_result = finder.find_path(start_id, target_id, "normal")
     
-    if not start_loc or not target_loc:
-        raise HTTPException(status_code=404, detail="起点或终点不存在")
+    if not path_result.path_ids:
+        raise HTTPException(status_code=404, detail="未找到路径")
     
-    # 计算直线距离
-    distance = calculate_distance(start_loc, target_loc)
-    
-    # 生成简单路径
-    path = generate_simple_path(start_loc, target_loc)
-    
-    # 估算时间（假设移动速度 1单位/秒）
-    estimated_time = int(distance * 1.5)  # 加上缓冲时间
-    # 如果是跨楼层，增加额外时间
-    floor_difference = abs(start_loc.floor - target_loc.floor)
-    if floor_difference > 0:
-        estimated_time += floor_difference * 15 
+    # 转换为旧格式
+    path_points = finder.get_path_details(path_result.path_ids)
     
     return {
-        "path": path,
-        "total_distance": distance,
-        "estimated_time": estimated_time,
-        "floor_changes": floor_difference
+        "path": [{
+            "x": p["x"],
+            "y": p["y"], 
+            "floor": p["floor"],
+            "type": p["type"],
+            "description": p["description"]
+        } for p in path_points],
+        "total_distance": path_result.total_distance,
+        "estimated_time": path_result.estimated_time,
+        "floor_changes": path_result.floor_changes
     }
 
 def calculate_distance(start: Location, target: Location) -> float:
@@ -86,65 +88,6 @@ def calculate_distance(start: Location, target: Location) -> float:
     
     return plane_distance
 
-def generate_simple_path(start: Location, target: Location) -> List[dict]:
-    """生成路径点（考虑楼层转换）"""
-    
-    if start.floor == target.floor:
-        # 同楼层：直接连接
-        return [
-            {
-                "x": start.x, 
-                "y": start.y, 
-                "floor": start.floor, 
-                "type": "start",
-                "description": "起点"
-            },
-            {
-                "x": target.x, 
-                "y": target.y, 
-                "floor": target.floor, 
-                "type": "end",
-                "description": "终点"
-            }
-        ]
-    else:
-        # 跨楼层：需要经过中转点
-        # 找到中间点（假设电梯位置在两个点的中间）
-        elevator_x = (start.x + target.x) / 2
-        elevator_y = (start.y + target.y) / 2
-        floor_difference = abs(target.floor - start.floor)
-        
-        return [
-            {
-                "x": start.x, 
-                "y": start.y, 
-                "floor": start.floor, 
-                "type": "start",
-                "description": f"起点（{start.name}）"
-            },
-            {
-                "x": elevator_x, 
-                "y": elevator_y, 
-                "floor": start.floor, 
-                "type": "transfer",
-                "description": f"电梯/楼梯（前往{target.floor}楼）"
-            },
-            {
-                "x": elevator_x, 
-                "y": elevator_y, 
-                "floor": target.floor, 
-                "type": "transfer",
-                "description": f"到达{target.floor}楼"
-            },
-            {
-                "x": target.x, 
-                "y": target.y, 
-                "floor": target.floor, 
-                "type": "end",
-                "description": f"终点（{target.name}）"
-            }
-        ]
-    
 @router.post("/plan", response_model=PathPlanResponse)
 async def plan_path(
     request: PathPlanRequest,
@@ -198,34 +141,3 @@ async def plan_path(
             status_code=500, 
             detail=f"路径规划失败：{str(e)}"
         )
-
-# 保持原有的 calculate_path 接口（向后兼容）
-@router.post("/path/calculate", response_model=PathResponse)
-async def calculate_path(
-    start_id: int,
-    target_id: int,
-    db: Session = Depends(get_db)
-):
-    """原有的路径计算接口（保持兼容）"""
-    # 调用智能算法，使用默认用户类型
-    finder = create_path_finder(db)
-    path_result = finder.find_path(start_id, target_id, "normal")
-    
-    if not path_result.path_ids:
-        raise HTTPException(status_code=404, detail="未找到路径")
-    
-    # 转换为旧格式
-    path_points = finder.get_path_details(path_result.path_ids)
-    
-    return {
-        "path": [{
-            "x": p["x"],
-            "y": p["y"], 
-            "floor": p["floor"],
-            "type": p["point_type"],
-            "description": p["description"]
-        } for p in path_points],
-        "total_distance": path_result.total_distance,
-        "estimated_time": path_result.estimated_time,
-        "floor_changes": path_result.floor_changes
-    }

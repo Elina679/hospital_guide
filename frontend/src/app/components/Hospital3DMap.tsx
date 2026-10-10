@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader';
 import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer';
 import { Button } from '@/app/components/ui/button';
 import { PathPoint } from '@/app/services/navigationApi';
 
@@ -10,7 +11,8 @@ const FLOOR_HEIGHT = 3;
 const ACTIVE_FLOOR_OPACITY = 1;
 const FOCUSED_ROUTE_OPACITY = 0.96;
 const PATH_ELEVATION = 0.06;
-const CAMERA_POSITION = new THREE.Vector3(0, 18, 24);
+// 相机位置拉远，保证整个楼层平面（±10.2 × ±3.94）在窄屏容器内完整可见
+const CAMERA_POSITION = new THREE.Vector3(0, 28, 40);
 const ENABLE_WEBXR = false;
 const MODEL_MATERIAL_COLORS: Record<string, number> = {
   road: 0xb8d8c7,
@@ -39,6 +41,7 @@ interface Hospital3DMapProps {
   onFloorChange?: (floor: number) => void;
   onClose?: () => void;
   showControls?: boolean;
+  locationLabels?: DepartmentLabel[];
 }
 
 interface FloorModelConfig {
@@ -48,11 +51,21 @@ interface FloorModelConfig {
   name: string;
 }
 
+export interface DepartmentLabel {
+  id: number;
+  name: string;
+  floor: number;
+  x: number;
+  y: number;
+  type?: string;
+}
+
 export function Hospital3DMap({
   pathPoints = [],
   currentFloor = 1,
   onFloorChange,
   showControls = true,
+  locationLabels = [],
 }: Hospital3DMapProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -61,6 +74,8 @@ export function Hospital3DMap({
   const controlsRef = useRef<OrbitControls | null>(null);
   const viewedFloorRef = useRef(currentFloor);
   const floorObjectsRef = useRef<Map<number, THREE.Object3D>>(new Map());
+  const labelRendererRef = useRef<CSS2DRenderer | null>(null);
+  const labelGroupsRef = useRef<Map<number, THREE.Group>>(new Map());
   const pathGroupRef = useRef<THREE.Group | null>(null);
   const xrSessionRef = useRef<XRSession | null>(null);
   const animationFrameIdRef = useRef<number | null>(null);
@@ -71,8 +86,6 @@ export function Hospital3DMap({
   const [vrSupportMessage, setVrSupportMessage] = useState('正在检测 WebXR 支持...');
   const [isVrActive, setIsVrActive] = useState(false);
   const [isVrPending, setIsVrPending] = useState(false);
-
-  console.log('Hospital3DMap pathPoints =', pathPoints);
 
   const floorModels: FloorModelConfig[] = [
     { floor: 1, obj: 'm1F.obj', mtl: 'm1F.mtl', name: '1F' },
@@ -195,6 +208,10 @@ export function Hospital3DMap({
       applyFloorOpacity(object, ACTIVE_FLOOR_OPACITY);
     });
 
+    labelGroupsRef.current.forEach((group, floor) => {
+      group.visible = floor === focusFloor;
+    });
+
     syncCameraTarget();
   };
 
@@ -222,6 +239,19 @@ export function Hospital3DMap({
         child.receiveShadow = false;
         const materials = Array.isArray(child.material) ? child.material : [child.material];
         materials.forEach((material) => {
+          // 模型里的文字（材质"字体/字/材质"）与房间错配，且 2F/3F 无文字：
+          // 全部隐藏，改由前端用数据库坐标统一标注
+          const matName = material.name || '';
+          if (matName.includes('字体') || matName === '字' || matName === '材质') {
+            child.visible = false;
+            return;
+          }
+          // 隐藏模型自带的小圆球（ball/r 装饰球），不再显示
+          if (matName === 'ball' || matName.startsWith('ball.') || matName === 'r') {
+            child.visible = false;
+            return;
+          }
+
           const color = MODEL_MATERIAL_COLORS[material.name];
           if (color === undefined || !('color' in material)) {
             return;
@@ -308,19 +338,6 @@ export function Hospital3DMap({
       point.y
     );
 
-  const getPointColor = (type: PathPoint['type']) => {
-    switch (type) {
-      case 'start':
-        return 0x78a88a;
-      case 'end':
-        return 0xc98780;
-      case 'transfer':
-        return 0xc2a66e;
-      default:
-        return 0x6d9eb8;
-    }
-  };
-
   const getRouteOpacityForFloor = (floor: number) => {
     return floor === focusFloor ? FOCUSED_ROUTE_OPACITY : 0;
   };
@@ -340,6 +357,10 @@ export function Hospital3DMap({
     }
 
     renderer.render(scene, camera);
+
+    if (labelRendererRef.current) {
+      labelRendererRef.current.render(scene, camera);
+    }
   };
 
   const stopStandardRenderLoop = () => {
@@ -430,22 +451,84 @@ export function Hospital3DMap({
       group.add(line);
   }
 
-    points.forEach((point) => {
-      const markerMaterial = new THREE.MeshBasicMaterial({
-        color: getPointColor(point.type),
-        transparent: true,
-        opacity: getRouteOpacityForFloor(point.floor),
-      });
-      const marker = new THREE.Mesh(
-        new THREE.SphereGeometry(point.type === 'transfer' ? 0.18 : 0.15, 18, 18),
-        markerMaterial
-      );
-      marker.position.copy(pointToVector(point));
-      group.add(marker);
-    });
-
     sceneRef.current.add(group);
     pathGroupRef.current = group;
+  };
+
+  const clearFloorLabels = () => {
+    labelGroupsRef.current.forEach((group) => {
+      sceneRef.current?.remove(group);
+      group.traverse((child) => {
+        if (child instanceof CSS2DObject) {
+          child.element.remove();
+        }
+      });
+    });
+    labelGroupsRef.current.clear();
+  };
+
+  // 用数据库坐标在模型上渲染科室名称标注（与路径终点同一坐标系，天然对齐）
+  const createFloorLabels = (labels: DepartmentLabel[]) => {
+    if (!sceneRef.current) {
+      return;
+    }
+
+    clearFloorLabels();
+
+    const byFloor = new Map<number, DepartmentLabel[]>();
+    labels.forEach((label) => {
+      const name = label.name || '';
+      // 只标注科室/楼梯/电梯/厕所等真实功能点，跳过网格走廊点和内部节点
+      if (label.type === 'grid' || label.type === 'path_node') {
+        return;
+      }
+      if (
+        !name ||
+        name.startsWith('科室_') ||
+        name.startsWith('corner') ||
+        name.startsWith('hub') ||
+        name.startsWith('走廊点_') ||
+        name.startsWith('接驳点_') ||
+        name.startsWith('楼梯口_')
+      ) {
+        return;
+      }
+      const list = byFloor.get(label.floor) || [];
+      list.push(label);
+      byFloor.set(label.floor, list);
+    });
+
+    byFloor.forEach((list, floor) => {
+      const group = new THREE.Group();
+      group.userData = { type: 'floor_labels', floor };
+      list.forEach((label) => {
+        const el = document.createElement('div');
+        el.textContent = label.name;
+        el.style.position = 'absolute';
+        el.style.transform = 'translate(-50%, -50%)';
+        el.style.fontSize = '18px';
+        el.style.color = '#1e293b';
+        el.style.background = 'rgba(255,255,255,0.94)';
+        el.style.padding = '2px 8px';
+        el.style.borderRadius = '6px';
+        el.style.boxShadow = '0 1px 4px rgba(0,0,0,0.22)';
+        el.style.pointerEvents = 'none';
+        el.style.whiteSpace = 'nowrap';
+        el.style.lineHeight = '1.5';
+        el.style.fontWeight = '600';
+        const labelObject = new CSS2DObject(el);
+        labelObject.position.set(
+          label.x,
+          getFloorOffset(label.floor) + 0.45,
+          label.y
+        );
+        group.add(labelObject);
+      });
+      sceneRef.current?.add(group);
+      labelGroupsRef.current.set(floor, group);
+    });
+
+    updateFloorVisibility();
   };
 
   const exitVrSession = async () => {
@@ -548,6 +631,14 @@ export function Hospital3DMap({
     renderer.domElement.style.touchAction = 'none';
     rendererRef.current = renderer;
 
+    const labelRenderer = new CSS2DRenderer();
+    labelRenderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
+    labelRenderer.domElement.style.position = 'absolute';
+    labelRenderer.domElement.style.top = '0';
+    labelRenderer.domElement.style.left = '0';
+    labelRenderer.domElement.style.pointerEvents = 'none';
+    labelRendererRef.current = labelRenderer;
+
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.06;
@@ -555,8 +646,8 @@ export function Hospital3DMap({
     controls.enablePan = true;
     controls.enableZoom = true;
     controls.screenSpacePanning = true;
-    controls.minDistance = 8;
-    controls.maxDistance = 70;
+    controls.minDistance = 6;
+    controls.maxDistance = 150;
     controls.zoomSpeed = 1.1;
     controls.panSpeed = 1.1;
     controls.rotateSpeed = 0.9;
@@ -578,6 +669,7 @@ export function Hospital3DMap({
     void loadAllFloorModels();
 
     mountRef.current.appendChild(renderer.domElement);
+    mountRef.current.appendChild(labelRenderer.domElement);
     startStandardRenderLoop();
 
     const handleResize = () => {
@@ -590,6 +682,7 @@ export function Hospital3DMap({
       cameraRef.current.aspect = width / height;
       cameraRef.current.updateProjectionMatrix();
       rendererRef.current.setSize(width, height);
+      labelRendererRef.current?.setSize(width, height);
     };
 
     window.addEventListener('resize', handleResize);
@@ -610,10 +703,12 @@ export function Hospital3DMap({
 
       window.removeEventListener('resize', handleResize);
       clearPathGroup();
+      clearFloorLabels();
       floorObjectsRef.current.forEach((object) => disposeObject(object));
       floorObjectsRef.current.clear();
       controls.dispose();
       renderer.dispose();
+      labelRendererRef.current = null;
 
       if (mountRef.current?.contains(renderer.domElement)) {
         mountRef.current.removeChild(renderer.domElement);
@@ -673,6 +768,10 @@ export function Hospital3DMap({
   useEffect(() => {
     drawNavigationPath(pathPoints);
   }, [pathPoints, currentFloor]);
+
+  useEffect(() => {
+    createFloorLabels(locationLabels);
+  }, [locationLabels]);
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-gradient-to-b from-blue-50 to-white">

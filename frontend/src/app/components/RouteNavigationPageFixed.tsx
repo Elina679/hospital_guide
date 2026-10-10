@@ -340,6 +340,7 @@ export function RouteNavigationPageFixed({ onClose }: RouteNavigationPageProps) 
               currentFloor={currentFloor}
               onFloorChange={handleFloorChange}
               onClose={onClose}
+              locationLabels={locations}
             />
           </div>
 

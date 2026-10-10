@@ -2,5 +2,9 @@ fastapi
 uvicorn[standard]
 sqlalchemy
 passlib[bcrypt]
+# 固定 bcrypt 版本：passlib 1.7.4 与 bcrypt 5.x 不兼容（缺少 __about__ 属性，注册/登录 500）
+bcrypt==4.0.1
+requests
+python-multipart
 python-jose[cryptography]
 python-dotenv
