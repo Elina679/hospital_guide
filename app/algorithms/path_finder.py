@@ -70,6 +70,9 @@ class PathFinder:
         elif user_type == "elderly":
             if path_type == "stairs":
                 cost *= weights.get("stairs", 3.0)
+            elif path_type == "elevator":
+                # 老人优先分配电梯：电梯边打折
+                cost *= weights.get("elevator", 0.7)
         
         # 所有用户通用的拥挤度处理
         crowdedness = path_obj.attributes.get("crowdedness", 0)
@@ -200,9 +203,9 @@ class PathFinder:
         dy = loc1.y - loc2.y
         plane_distance = math.sqrt(dx*dx + dy*dy)
         
-        # 楼层转换代价（每层按10米计算）
+        # 楼层转换代价（每层按1米计，必须低估实际跨层代价以保证A*最优）
         floor_diff = abs(loc1.floor - loc2.floor)
-        vertical_cost = floor_diff * 10.0
+        vertical_cost = floor_diff * 1.0
         
         return plane_distance + vertical_cost
     

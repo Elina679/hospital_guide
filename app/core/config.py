@@ -10,7 +10,7 @@ USER_WEIGHTS = {
     },
     "elderly": {
         "base_speed": 0.7,
-        "weights": {"stairs": 3.0, "crowded": 2.0, "elevator": 0.7}
+        "weights": {"stairs": 3.0, "crowded": 2.0, "elevator": 0.5}
     },
     "normal": {
         "base_speed": 1.0,
@@ -20,8 +20,8 @@ USER_WEIGHTS = {
 
 PATH_TYPE_COSTS = {
     "corridor": 1.0,
-    "elevator": 1.2,
-    "stairs": 1.5,
+    "elevator": 1.0,
+    "stairs": 1.0,
     "ramp": 1.1,
     "escalator": 1.0
 }
