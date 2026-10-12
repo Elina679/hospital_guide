@@ -344,7 +344,7 @@ export function RouteNavigationPageFixed({ onClose }: RouteNavigationPageProps) 
             />
           </div>
 
-          <div className="absolute bottom-16 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
+          <div className="absolute bottom-16 left-0 right-0 z-20 bg-white border-t border-gray-200 shadow-lg">
             <div className="h-[220px] overflow-y-auto p-3">
               <div className="flex items-center justify-between mb-2">
                 <div>

@@ -1,0 +1,8 @@
+{
+  "appId": "com.hospitalguide.app",
+  "appName": "Hospital Guide",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http"
+  }
+}

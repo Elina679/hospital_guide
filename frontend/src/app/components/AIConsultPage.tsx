@@ -3,6 +3,8 @@ import { Send, Bot, User, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
 import { sendAIMessage } from '@/app/services/aiApi';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface Message {
   id: number;
@@ -131,7 +133,13 @@ export function AIConsultPage() {
               )}
               
               <div className={`max-w-[75%] rounded-2xl px-4 py-3 ${message.sender === 'user' ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-tr-sm shadow-md' : 'bg-white text-gray-900 rounded-tl-sm shadow-sm'}`}>
-                <p className="text-sm whitespace-pre-wrap leading-relaxed break-words">{message.text}</p>
+                {message.sender === 'ai' ? (
+                  <div className="text-sm leading-relaxed break-words [&_p]:mb-2 last:[&_p]:mb-0 [&_strong]:font-semibold [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <p className="text-sm whitespace-pre-wrap leading-relaxed break-words">{message.text}</p>
+                )}
                 <p className={`text-xs mt-2 ${message.sender === 'user' ? 'text-blue-100' : 'text-gray-400'}`}>{message.timestamp.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</p>
               </div>
 
