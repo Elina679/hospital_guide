@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigation, Plus, X } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Hospital3DMap } from './Hospital3DMap';
@@ -41,6 +41,27 @@ export function RouteNavigationPageFixed({ onClose }: RouteNavigationPageProps) 
   const [isLoading, setIsLoading] = useState(false);
   const [currentFloor, setCurrentFloor] = useState(1);
   const [userType, setUserType] = useState<UserType>('normal');
+  // 导航路径信息面板高度（可拖拽调节，避免遮挡地图）
+  const [panelHeight, setPanelHeight] = useState(220);
+  const dragStateRef = useRef<{ startY: number; startHeight: number } | null>(null);
+
+  const handlePanelDragStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    dragStateRef.current = { startY: e.clientY, startHeight: panelHeight };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handlePanelDragMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragStateRef.current) return;
+    const dy = e.clientY - dragStateRef.current.startY;
+    // 往下拖（dy > 0）→ 面板变矮 → 露出更多地图；往上拖 → 面板变高
+    const next = dragStateRef.current.startHeight - dy;
+    const maxHeight = Math.max(220, window.innerHeight - 280); // 顶部栏 + 底部留白
+    setPanelHeight(Math.min(Math.max(next, 110), maxHeight));
+  };
+
+  const handlePanelDragEnd = () => {
+    dragStateRef.current = null;
+  };
   const { navigationState, updateNavigationState } = useNavigationState();
 
   useEffect(() => {
@@ -341,11 +362,25 @@ export function RouteNavigationPageFixed({ onClose }: RouteNavigationPageProps) 
               onFloorChange={handleFloorChange}
               onClose={onClose}
               locationLabels={locations}
+              bottomReserved={64 + 40 + panelHeight}
             />
           </div>
 
-          <div className="absolute bottom-16 left-0 right-0 z-20 bg-white border-t border-gray-200 shadow-lg">
-            <div className="h-[220px] overflow-y-auto p-3">
+          <div className="absolute bottom-16 left-0 right-0 z-20">
+            {/* 拖拽手柄：上沿渐变透明→白，避免硬线遮挡地图科室标注 */}
+            <div
+              onPointerDown={handlePanelDragStart}
+              onPointerMove={handlePanelDragMove}
+              onPointerUp={handlePanelDragEnd}
+              onPointerCancel={handlePanelDragEnd}
+              className="h-10 bg-gradient-to-b from-transparent to-white flex items-end justify-center cursor-row-resize select-none touch-none group"
+              title="拖动调整导航信息面板高度"
+              role="separator"
+              aria-orientation="horizontal"
+            >
+              <div className="mb-1.5 w-10 h-1.5 rounded-full bg-gray-400/90 shadow-sm group-hover:bg-gray-500 transition-colors" />
+            </div>
+            <div className="bg-white overflow-y-auto p-3 border-t border-gray-200 shadow-lg" style={{ height: panelHeight }}>
               <div className="flex items-center justify-between mb-2">
                 <div>
                   <h3 className="text-sm font-semibold text-gray-800">导航路径信息</h3>

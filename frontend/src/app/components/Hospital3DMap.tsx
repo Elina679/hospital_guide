@@ -12,7 +12,7 @@ const ACTIVE_FLOOR_OPACITY = 1;
 const FOCUSED_ROUTE_OPACITY = 0.96;
 const PATH_ELEVATION = 0.06;
 // 底部导航信息面板占用的空间：4rem 底部导航 + 220px 信息面板。
-const LABEL_PANEL_RESERVED_SPACE = 284;
+// 标签层底部预留空间改为动态（bottomReserved prop），与导航信息面板高度联动
 const BUILDING_HIGHLIGHT_COLORS = {
   start: 0x22c55e,
   end: 0xef4444,
@@ -48,6 +48,8 @@ interface Hospital3DMapProps {
   onClose?: () => void;
   showControls?: boolean;
   locationLabels?: DepartmentLabel[];
+  /** 底部预留空间（px）：与导航信息面板高度联动，避免标签被固定裁切 */
+  bottomReserved?: number;
 }
 
 interface FloorModelConfig {
@@ -74,6 +76,7 @@ export function Hospital3DMap({
   onFloorChange,
   showControls = true,
   locationLabels = [],
+  bottomReserved = 0,
 }: Hospital3DMapProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -774,7 +777,7 @@ export function Hospital3DMap({
     labelRenderer.domElement.style.left = '0';
     labelRenderer.domElement.style.pointerEvents = 'none';
     labelRenderer.domElement.style.zIndex = '1';
-    labelRenderer.domElement.style.clipPath = `inset(0 0 ${LABEL_PANEL_RESERVED_SPACE}px 0)`;
+    labelRenderer.domElement.style.clipPath = `inset(0 0 ${Math.max(0, bottomReserved)}px 0)`;
     labelRendererRef.current = labelRenderer;
 
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -915,6 +918,13 @@ export function Hospital3DMap({
   useEffect(() => {
     createFloorLabels(locationLabels);
   }, [locationLabels]);
+
+  // 底部预留空间与导航信息面板高度联动：面板拖动时同步调整标签裁剪边界
+  useEffect(() => {
+    if (labelRendererRef.current) {
+      labelRendererRef.current.domElement.style.clipPath = `inset(0 0 ${Math.max(0, bottomReserved)}px 0)`;
+    }
+  }, [bottomReserved]);
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-gradient-to-b from-blue-50 to-white">
