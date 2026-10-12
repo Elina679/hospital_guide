@@ -5,3 +5,13 @@ __pycache__/
 .idea/
 .vscode/
 .DS_Store
+# 临时调试脚本与输出
+_*.py
+_*.txt
+_*.png
+_*.svg
+# 数据库备份
+*.bak
+# 前端缓存
+frontend/.vite/
+data.xlsx
