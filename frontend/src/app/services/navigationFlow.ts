@@ -1,5 +1,5 @@
 import { Location, PathResponse, UserType, navigationAPI } from './navigationApi';
-import { StoredNavigationState, saveNavigationState } from './navigationStorage';
+import { StoredNavigationState, saveNavigationState, addNavigationHistory } from './navigationStorage';
 import { getLocationDisplayName } from '@/app/utils/navigationPresentation';
 
 export interface NavigationPlanOptions {
@@ -42,5 +42,6 @@ export function saveNavigationPlanByName(
   state: StoredNavigationState
 ): { startName: string; endName: string } {
   saveNavigationState(result, startName, endName, state);
+  addNavigationHistory(startName, endName);
   return { startName, endName };
 }

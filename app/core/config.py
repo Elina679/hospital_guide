@@ -6,7 +6,13 @@ USER_WEIGHTS = {
     },
     "emergency": {
         "base_speed": 1.5,
-        "weights": {"stairs": 1.0, "crowded": 1.5, "waiting": 2.0, "shortest": 0.8}
+        "weights": {
+            "stairs": 1.0,
+            "crowded": 2.5,       # 绿色通道：强烈避让拥挤路段（人少优先）
+            "waiting": 1.0,       # 电梯等待惩罚减半，更偏向距离短的路径
+            "shortest": 0.8,
+            "green_channel": 1.0  # 标记：急症/重症绿色通道
+        }
     },
     "elderly": {
         "base_speed": 0.7,

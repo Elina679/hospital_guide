@@ -1,9 +1,17 @@
-import { useState, Fragment } from 'react';
-import { Mail, Calendar, Heart, MessageCircle, Settings, Award, ChevronRight, Bell, Shield, HelpCircle, LogOut, Globe } from 'lucide-react';
-import { Card, CardContent } from '@/app/components/ui/card';
+import { useState, useEffect } from 'react';
+import { Mail, Calendar, Heart, MessageCircle, Settings, Award, ChevronRight, Bell, Shield, HelpCircle, LogOut, Globe, ArrowLeft, Clock, MapPin, Search, Star, X } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/app/components/ui/avatar';
 import { useLanguage } from '@/app/contexts/LanguageContext';
 import { t } from '@/app/utils/i18n';
+import { navigationAPI, Location } from '@/app/services/navigationApi';
+import {
+  NavigationHistoryItem,
+  FavoriteDept,
+  loadNavigationHistory,
+  loadFavoriteDepts,
+  addFavoriteDept,
+  removeFavoriteDept,
+} from '@/app/services/navigationStorage';
 
 interface ProfilePageProps {
   userName: string;
@@ -12,9 +20,44 @@ interface ProfilePageProps {
   onNavigate?: (page: string) => void;
 }
 
+interface MenuItem {
+  key: string;
+  icon: typeof Heart;
+  label: string;
+  color: string;
+  bgColor: string;
+}
+
 export function ProfilePage({ userName, userEmail, onLogout, onNavigate }: ProfilePageProps) {
   const { language } = useLanguage();
-  
+  const [view, setView] = useState<'main' | 'records' | 'favorites'>('main');
+  const [records, setRecords] = useState<NavigationHistoryItem[]>([]);
+  const [favorites, setFavorites] = useState<FavoriteDept[]>([]);
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    setRecords(loadNavigationHistory());
+    setFavorites(loadFavoriteDepts());
+    let cancelled = false;
+    navigationAPI
+      .getLocations()
+      .then((data) => {
+        if (!cancelled) {
+          setLocations(data);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLoadError(t('noFavorites', language));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [language]);
+
   const stats = [
     { label: t('consultationCount', language), value: '12', icon: MessageCircle, color: 'text-sky-600', bgColor: 'bg-sky-50' },
     { label: t('healthScore', language), value: '85', icon: Heart, color: 'text-rose-600', bgColor: 'bg-rose-50' },
@@ -22,29 +65,228 @@ export function ProfilePage({ userName, userEmail, onLogout, onNavigate }: Profi
     { label: t('healthBadges', language), value: '5', icon: Award, color: 'text-violet-600', bgColor: 'bg-violet-50' },
   ];
 
-  const menuSections = [
+  const menuSections: { items: MenuItem[] }[] = [
     {
       items: [
-        { icon: Heart, label: t('healthProfile', language), color: 'text-rose-600', bgColor: 'bg-rose-50' },
-        { icon: Calendar, label: t('appointmentRecords', language), color: 'text-sky-600', bgColor: 'bg-sky-50' },
-        { icon: MessageCircle, label: t('consultationHistory', language), color: 'text-emerald-600', bgColor: 'bg-emerald-50' },
+        { key: 'healthProfile', icon: Heart, label: t('healthProfile', language), color: 'text-rose-600', bgColor: 'bg-rose-50' },
+        { key: 'records', icon: MessageCircle, label: t('appointmentRecords', language), color: 'text-emerald-600', bgColor: 'bg-emerald-50' },
+        { key: 'consultationHistory', icon: Calendar, label: t('consultationHistory', language), color: 'text-sky-600', bgColor: 'bg-sky-50' },
       ],
     },
     {
       items: [
-        { icon: Bell, label: t('notifications', language), color: 'text-amber-600', bgColor: 'bg-amber-50' },
-        { icon: Shield, label: t('privacySettings', language), color: 'text-violet-600', bgColor: 'bg-violet-50' },
-        { icon: Globe, label: t('languageSettings', language), color: 'text-blue-600', bgColor: 'bg-blue-50' },
-        { icon: Settings, label: t('accountSettings', language), color: 'text-slate-600', bgColor: 'bg-slate-50' },
+        { key: 'favorites', icon: Star, label: t('favoriteDepts', language), color: 'text-amber-600', bgColor: 'bg-amber-50' },
+        { key: 'notifications', icon: Bell, label: t('notifications', language), color: 'text-amber-600', bgColor: 'bg-amber-50' },
+        { key: 'privacySettings', icon: Shield, label: t('privacySettings', language), color: 'text-violet-600', bgColor: 'bg-violet-50' },
+        { key: 'languageSettings', icon: Globe, label: t('languageSettings', language), color: 'text-blue-600', bgColor: 'bg-blue-50' },
+        { key: 'accountSettings', icon: Settings, label: t('accountSettings', language), color: 'text-slate-600', bgColor: 'bg-slate-50' },
       ],
     },
     {
       items: [
-        { icon: HelpCircle, label: t('helpCenter', language), color: 'text-sky-600', bgColor: 'bg-sky-50' },
-        { icon: Award, label: t('aboutUs', language), color: 'text-indigo-600', bgColor: 'bg-indigo-50' },
+        { key: 'helpCenter', icon: HelpCircle, label: t('helpCenter', language), color: 'text-sky-600', bgColor: 'bg-sky-50' },
+        { key: 'aboutUs', icon: Award, label: t('aboutUs', language), color: 'text-indigo-600', bgColor: 'bg-indigo-50' },
       ],
     },
   ];
+
+  const handleMenuClick = (item: MenuItem) => {
+    if (item.key === 'records') {
+      setRecords(loadNavigationHistory());
+      setView('records');
+    } else if (item.key === 'favorites') {
+      setFavorites(loadFavoriteDepts());
+      setView('favorites');
+    } else if (item.key === 'languageSettings' && onNavigate) {
+      onNavigate('language');
+    }
+  };
+
+  const handleAddFavorite = (location: Location) => {
+    addFavoriteDept({ id: location.id, name: location.name, floor: location.floor });
+    setFavorites(loadFavoriteDepts());
+  };
+
+  const handleRemoveFavorite = (id: number) => {
+    removeFavoriteDept(id);
+    setFavorites(loadFavoriteDepts());
+  };
+
+  const trimmedQuery = searchQuery.trim();
+  const searchResults = trimmedQuery
+    ? locations.filter((loc) => loc.name.includes(trimmedQuery)).slice(0, 20)
+    : [];
+
+  const renderRecords = () => (
+    <div className="h-dvh w-full flex flex-col bg-gradient-to-br from-slate-50 to-blue-50">
+      <header className="relative bg-white pt-12 pb-6 px-4 rounded-b-[2.5rem] shadow-md overflow-hidden">
+        <button
+          onClick={() => setView('main')}
+          className="absolute left-4 top-11 p-2.5 bg-slate-100 rounded-full text-slate-600 hover:bg-slate-200 transition-all duration-300 shadow-sm"
+          aria-label={t('back', language)}
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+        <h2 className="text-center text-xl font-bold text-slate-900">{t('navRecords', language)}</h2>
+      </header>
+
+      <div className="flex-1 overflow-y-auto pb-24 scrollbar-hide px-6 mt-6 space-y-3">
+        {records.length === 0 ? (
+          <div className="text-center py-16">
+            <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Clock className="w-8 h-8 text-slate-300" />
+            </div>
+            <p className="text-slate-400 font-medium">{t('noNavRecords', language)}</p>
+          </div>
+        ) : (
+          records.map((record) => (
+            <div
+              key={record.id}
+              className="bg-white/95 backdrop-blur-lg rounded-2xl p-5 shadow-md shadow-slate-200/60 border border-slate-100/80"
+            >
+              <div className="flex items-center gap-2 text-xs text-slate-400 font-medium mb-2.5">
+                <Clock className="w-3.5 h-3.5" />
+                <span>{record.time}</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="flex-1 flex items-center gap-2 min-w-0">
+                  <MapPin className="w-4.5 h-4.5 text-emerald-500 flex-shrink-0" />
+                  <span className="text-slate-800 font-semibold truncate">{record.start}</span>
+                </div>
+                <ChevronRight className="w-4.5 h-4.5 text-slate-300 flex-shrink-0" />
+                <div className="flex-1 flex items-center gap-2 min-w-0">
+                  <MapPin className="w-4.5 h-4.5 text-rose-500 flex-shrink-0" />
+                  <span className="text-slate-800 font-semibold truncate">{record.end}</span>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+
+  const renderFavorites = () => {
+    const favoriteIds = new Set(favorites.map((fav) => fav.id));
+
+    return (
+      <div className="h-dvh w-full flex flex-col bg-gradient-to-br from-slate-50 to-blue-50">
+        <header className="relative bg-white pt-12 pb-6 px-4 rounded-b-[2.5rem] shadow-md overflow-hidden">
+          <button
+            onClick={() => setView('main')}
+            className="absolute left-4 top-11 p-2.5 bg-slate-100 rounded-full text-slate-600 hover:bg-slate-200 transition-all duration-300 shadow-sm"
+            aria-label={t('back', language)}
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <h2 className="text-center text-xl font-bold text-slate-900">{t('favoriteDepts', language)}</h2>
+        </header>
+
+        <div className="flex-1 overflow-y-auto pb-24 scrollbar-hide px-6 mt-6 space-y-6">
+          {/* 搜索栏 */}
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t('searchDept', language)}
+              className="w-full h-12 pl-12 pr-11 text-base bg-white border border-slate-200 focus:border-sky-400 focus:ring-2 focus:ring-sky-100 outline-none transition-all duration-300 rounded-2xl shadow-sm placeholder:text-slate-400"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600"
+                aria-label="clear"
+              >
+                <X className="w-4.5 h-4.5" />
+              </button>
+            )}
+          </div>
+
+          {/* 搜索结果 */}
+          {searchResults.length > 0 && (
+            <div className="bg-white/95 backdrop-blur-lg rounded-2xl shadow-md shadow-slate-200/60 border border-slate-100/80 overflow-hidden">
+              {searchResults.map((loc, index) => (
+                <button
+                  key={loc.id}
+                  onClick={() => handleAddFavorite(loc)}
+                  disabled={favoriteIds.has(loc.id)}
+                  className={`w-full flex items-center justify-between p-4 border-b border-slate-50 last:border-0 ${
+                    favoriteIds.has(loc.id) ? 'opacity-55' : 'hover:bg-slate-50/50 active:bg-slate-100'
+                  } transition-all duration-300`}
+                >
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <div className="w-9 h-9 bg-emerald-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <MapPin className="w-4.5 h-4.5 text-emerald-600" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-slate-700 font-semibold truncate">{loc.name}</p>
+                      <p className="text-xs text-slate-400 font-medium">{loc.floor}F · {loc.type}</p>
+                    </div>
+                  </div>
+                  {favoriteIds.has(loc.id) ? (
+                    <Star className="w-5 h-5 text-amber-400 flex-shrink-0" />
+                  ) : (
+                    <span className="text-xs font-semibold text-sky-600 bg-sky-50 px-2.5 py-1 rounded-full flex-shrink-0">
+                      +{t('addFavorite', language)}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* 已收藏科室 */}
+          <div>
+            <h3 className="text-sm font-bold text-slate-500 mb-3 px-1">{t('favoriteDepts', language)}</h3>
+            {favorites.length === 0 ? (
+              <div className="text-center py-12 bg-white/60 rounded-2xl border border-slate-100/60">
+                <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Star className="w-8 h-8 text-amber-300" />
+                </div>
+                <p className="text-slate-400 font-medium">
+                  {loadError || t('noFavorites', language)}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {favorites.map((fav) => (
+                  <div
+                    key={fav.id}
+                    className="bg-white/95 backdrop-blur-lg rounded-2xl p-4 shadow-md shadow-slate-200/60 border border-slate-100/80 flex items-center gap-3"
+                  >
+                    <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                      <Star className="w-5 h-5 text-amber-500" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-slate-700 font-semibold truncate">{fav.name}</p>
+                      <p className="text-xs text-slate-400 font-medium">{fav.floor}F</p>
+                    </div>
+                    <button
+                      onClick={() => handleRemoveFavorite(fav.id)}
+                      className="p-2 text-slate-300 hover:text-rose-500 transition-colors duration-300 flex-shrink-0"
+                      aria-label={t('cancelFavorite', language)}
+                    >
+                      <X className="w-4.5 h-4.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  if (view === 'records') {
+    return renderRecords();
+  }
+
+  if (view === 'favorites') {
+    return renderFavorites();
+  }
 
   return (
     <div className="h-dvh w-full flex flex-col bg-gradient-to-br from-slate-50 to-blue-50">
@@ -62,7 +304,7 @@ export function ProfilePage({ userName, userEmail, onLogout, onNavigate }: Profi
                 {userName.charAt(0).toUpperCase()}
               </AvatarFallback>
             </Avatar>
-            
+
             <div className="flex-1 min-w-0">
               <h1 className="text-[2.25rem] font-bold text-slate-900 truncate mb-1.5">{userName}</h1>
               <p className="text-sm text-slate-500 truncate font-medium flex items-center gap-2">
@@ -70,7 +312,7 @@ export function ProfilePage({ userName, userEmail, onLogout, onNavigate }: Profi
                 {userEmail}
               </p>
             </div>
-            
+
             <button className="p-3 bg-gradient-to-br from-slate-100 to-slate-200 rounded-full text-slate-600 hover:from-slate-200 hover:to-slate-300 transition-all duration-300 shadow-md hover:shadow-lg group">
                <Settings className="w-5.5 h-5.5 group-hover:rotate-90 transition-transform duration-300" />
             </button>
@@ -79,8 +321,8 @@ export function ProfilePage({ userName, userEmail, onLogout, onNavigate }: Profi
           {/* Stats Cards */}
           <div className="grid grid-cols-4 gap-2 min-[400px]:gap-4">
             {stats.map((stat, index) => (
-              <div 
-                key={index} 
+              <div
+                key={index}
                 className="bg-slate-50/90 backdrop-blur-sm rounded-2xl p-2 text-center border border-slate-100 shadow-md hover:shadow-lg transition-all duration-300 hover:-translate-y-0.5 group min-[400px]:p-4"
               >
                 <div className={`w-9 h-9 ${stat.bgColor} rounded-xl flex items-center justify-center mx-auto mb-2.5 group-hover:scale-110 transition-transform duration-300`}>
@@ -99,12 +341,8 @@ export function ProfilePage({ userName, userEmail, onLogout, onNavigate }: Profi
             <div key={sectionIndex} className="bg-white/95 backdrop-blur-lg rounded-2.5xl shadow-lg shadow-slate-200/60 overflow-hidden border border-slate-100/80">
               {section.items.map((item, itemIndex) => (
                 <button
-                  key={itemIndex}
-                  onClick={() => {
-                    if (item.label === t('languageSettings', language) && onNavigate) {
-                      onNavigate('language');
-                    }
-                  }}
+                  key={item.key}
+                  onClick={() => handleMenuClick(item)}
                   className="w-full flex items-center justify-between p-5 hover:bg-slate-50/50 active:bg-slate-100 transition-all duration-300 border-b border-slate-50/80 last:border-0 group"
                 >
                   <div className="flex items-center gap-4.5 flex-1 min-w-0">
@@ -137,5 +375,5 @@ export function ProfilePage({ userName, userEmail, onLogout, onNavigate }: Profi
         </div>
       </div>
     </div>
-  ); 
+  );
 }

@@ -9,6 +9,7 @@ from app.schemas import LocationResponse, PathResponse
 
 from app.algorithms import create_path_finder
 from app.schemas import PathPlanRequest, PathPlanResponse
+from app.algorithms.route_tracker import get_route_tracker
 
 router = APIRouter()
 
@@ -104,9 +105,10 @@ async def plan_path(
     try:
         # 创建路径查找器
         finder = create_path_finder(db)
-        
-        # 查找路径
-        path_result = finder.find_path(
+
+        # 动态路径分配：根据实时路况（活跃用户占用）在主路径与
+        # 备选路径之间自动分流；返回 (路径结果, 分流信息)
+        path_result, assignment = finder.find_path_dynamic(
             start_id=request.start_id,
             end_id=request.end_id,
             user_type=request.user_type,
@@ -125,13 +127,23 @@ async def plan_path(
         # 生成导航指令
         instructions = finder.get_navigation_instructions(path_points)
         
+        # 将本次路径登记为活跃路线（按患者类型速度计算占用时长），
+        # 供后续请求动态分流使用
+        get_route_tracker().register_route(
+            user_type=request.user_type,
+            path_ids=path_result.path_ids,
+            total_distance=path_result.total_distance,
+            floor_changes=path_result.floor_changes,
+        )
+        
         return {
             "success": True,
             "path": path_points,
             "total_distance": path_result.total_distance,
             "estimated_time": path_result.estimated_time,
             "floor_changes": path_result.floor_changes,
-            "instructions": instructions
+            "instructions": instructions,
+            "dynamic_assignment": assignment,
         }
         
     except ValueError as e:

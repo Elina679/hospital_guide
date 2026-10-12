@@ -43,7 +43,7 @@ const USER_TYPE_LABELS: Record<UserType, string> = {
   normal: '普通用户',
   wheelchair: '轮椅用户',
   elderly: '老年用户',
-  emergency: '急救通道',
+  emergency: '急症/重症',
   staff: '医护人员',
 };
 
@@ -59,7 +59,7 @@ const USER_TYPE_DESCRIPTIONS: Record<UserType, string> = {
   normal: '标准导航',
   wheelchair: '无障碍路径',
   elderly: '平缓路线',
-  emergency: '最快通行',
+  emergency: '绿色通道·最短最快',
   staff: '内部通道',
 };
 

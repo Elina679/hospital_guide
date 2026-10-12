@@ -105,6 +105,7 @@ class PathPlanResponse(BaseModel):
     estimated_time: int
     floor_changes: int
     instructions: List[str]
+    dynamic_assignment: Optional[Dict[str, Any]] = None  # 动态路径分配信息
     
     class Config:
         json_schema_extra = {

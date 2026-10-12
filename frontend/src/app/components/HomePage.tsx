@@ -211,8 +211,8 @@ export function HomePage({ onNavigate, userName }: HomePageProps) {
           <CardContent className="p-4 min-[400px]:p-6">
             <div className="mb-6">
               <h3 className="text-lg font-semibold text-slate-900 mb-4">选择用户类型</h3>
-              <div className="grid grid-cols-3 gap-2 min-[400px]:gap-3">
-                {NAVIGATION_USER_TYPE_OPTIONS.slice(0, 3).map((type) => (
+              <div className="grid grid-cols-2 gap-2 min-[400px]:gap-3 sm:grid-cols-4">
+                {NAVIGATION_USER_TYPE_OPTIONS.map((type) => (
                   <button
                     key={type.value}
                     onClick={() => setUserType(type.value as UserType)}

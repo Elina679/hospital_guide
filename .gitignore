@@ -15,3 +15,6 @@ _*.svg
 # 前端缓存
 frontend/.vite/
 data.xlsx
+# merge 前的本地残留备份（保留待确认，不提交）
+frontend/android-untracked-backup/
+frontend/capacitor.config.json-untracked-backup

@@ -12,6 +12,13 @@ from sqlalchemy.orm import Session
 from app.core.config import USER_WEIGHTS, PATH_TYPE_COSTS
 from app.core.graph import HospitalGraph, build_graph_from_db
 from app.models import Location, Path
+from app.algorithms.route_tracker import (
+    get_route_tracker,
+    canonical_edge,
+    CONGESTION_THRESHOLD,
+    CONGESTION_COST_FACTOR,
+    MAX_ALTERNATIVE_DISTANCE_RATIO,
+)
 
 @dataclass
 class PathResult:
@@ -74,10 +81,15 @@ class PathFinder:
                 # 老人优先分配电梯：电梯边打折
                 cost *= weights.get("elevator", 0.7)
         
-        # 所有用户通用的拥挤度处理
+        # 拥挤度处理：普通用户需勾选 avoid_crowds 才避让；
+        # 急症/重症（绿色通道）强制避让拥挤路段，且惩罚更高（人少优先）
         crowdedness = path_obj.attributes.get("crowdedness", 0)
-        if crowdedness > 0.5 and "avoid_crowds" in preferences:
-            cost *= (1 + crowdedness * 2)
+        if crowdedness > 0.5:
+            if "avoid_crowds" in preferences:
+                cost *= (1 + crowdedness * 2)
+            elif user_type == "emergency":
+                crowd_weight = USER_WEIGHTS["emergency"]["weights"].get("crowded", 2.5)
+                cost *= (1 + crowdedness * crowd_weight)
         
         # 楼梯偏好处理
         if path_type == "stairs":
@@ -101,7 +113,8 @@ class PathFinder:
     
     def find_path(self, start_id: int, end_id: int, 
                   user_type: str = "normal",
-                  preferences: Optional[List[str]] = None) -> PathResult:
+                  preferences: Optional[List[str]] = None,
+                  avoid_congestion: bool = False) -> PathResult:
         """
         使用A*算法查找最优路径
         
@@ -110,6 +123,7 @@ class PathFinder:
             end_id: 终点位置ID
             user_type: 用户类型 (wheelchair, emergency, elderly, normal, staff)
             preferences: 用户偏好列表
+            avoid_congestion: 是否开启避堵模式（对拥挤边施加额外代价）
             
         Returns:
             PathResult: 路径规划结果
@@ -165,6 +179,16 @@ class PathFinder:
                 edge_cost = self.calculate_edge_cost(edge, path_obj, user_type, preferences)
                 if edge_cost == float('inf'):
                     continue  # 不可达
+
+                # 避堵模式：对当前有活跃用户占用的边追加拥挤惩罚
+                if avoid_congestion:
+                    active_users = get_route_tracker().edge_active_users(
+                        canonical_edge(current_id, edge.get("to_id"))
+                    )
+                    if active_users > 0:
+                        # 急症/重症绿色通道：避堵惩罚加倍，更坚决绕开有人路段
+                        factor = CONGESTION_COST_FACTOR * (2 if user_type == "emergency" else 1)
+                        edge_cost += active_users * factor
                 
                 tentative_g = current_g + edge_cost
                 
@@ -188,7 +212,122 @@ class PathFinder:
         
         # 未找到路径
         return PathResult([], 0.0, 0, float('inf'), 0)
-    
+
+    def find_path_dynamic(self, start_id: int, end_id: int,
+                          user_type: str = "normal",
+                          preferences: Optional[List[str]] = None):
+        """动态路径分配：根据实时路况在主路径与备选路径之间分流。
+
+        流程：
+            1. 用标准 A* 求「主路径」（默认最短/最省代价路径）；
+            2. 用避堵 A*（对活跃占用边追加惩罚）求「备选路径」；
+            3. 对比两条路径的活跃占用：若主路径拥挤（活跃用户数达到阈值）
+               且备选路径明显更空闲，则本次请求分配到备选路径；
+            4. 否则维持主路径。
+
+        Returns:
+            (PathResult, assignment_info)
+            assignment_info: {
+                "enabled": True,
+                "selected": "primary" | "alternative",
+                "reason": 中文分流理由,
+                "primary": {拥挤指标 + distance/time},
+                "alternative": {拥挤指标 + distance/time},
+            }
+        """
+        if preferences is None:
+            preferences = []
+
+        tracker = get_route_tracker()
+
+        # 1) 主路径（标准 A*）
+        primary = self.find_path(start_id, end_id, user_type, preferences)
+        if not primary.path_ids:
+            return primary, {
+                "enabled": True,
+                "selected": "primary",
+                "reason": "未找到可行路径",
+            }
+
+        primary_cong = tracker.path_congestion(primary.path_ids)
+
+        # 2) 备选路径（避堵 A*）
+        alternative = self.find_path(
+            start_id, end_id, user_type, preferences, avoid_congestion=True
+        )
+        alt_cong = (
+            tracker.path_congestion(alternative.path_ids)
+            if alternative.path_ids
+            else {"active_users": 0, "total_load": 0, "congested_edges": 0, "status": "clear"}
+        )
+
+        # 3) 分流判定
+        # 急症/重症（绿色通道）：只要有 1 位活跃用户占用即触发分流，保证"人少"
+        congestion_threshold = 1 if user_type == "emergency" else CONGESTION_THRESHOLD
+        green_prefix = "绿色通道：" if user_type == "emergency" else ""
+
+        selected = "primary"
+        if alternative.path_ids and alternative.path_ids != primary.path_ids:
+            dist_ratio_ok = (
+                alternative.total_distance
+                <= primary.total_distance * MAX_ALTERNATIVE_DISTANCE_RATIO
+            )
+            primary_busy = (
+                primary_cong["active_users"] >= congestion_threshold
+                or primary_cong["status"] == "congested"
+            )
+            # 备选路径由避堵 A* 算出，天然绕开拥挤边，故与活跃路线的
+            # 共享负载更低；只要备选负载更低即视为更空闲。
+            alt_better = (
+                alt_cong["total_load"] < primary_cong["total_load"]
+                or alt_cong["active_users"] < primary_cong["active_users"]
+            )
+
+            if dist_ratio_ok and primary_busy and alt_better:
+                selected = "alternative"
+                reason = (
+                    f"{green_prefix}默认路径当前有 {primary_cong['active_users']} 位活跃用户"
+                    f"（负载 {primary_cong['total_load']}）尚未走完；"
+                    f"已自动将本次请求分流至更空闲的备选路径"
+                    f"（活跃用户 {alt_cong['active_users']}，负载 {alt_cong['total_load']}）。"
+                )
+            else:
+                reason = (
+                    f"默认路径负载可接受（活跃用户 {primary_cong['active_users']}，"
+                    f"负载 {primary_cong['total_load']}），维持主路径。"
+                )
+        elif primary_cong["status"] == "clear":
+            reason = "默认路径当前无活跃占用，维持主路径。"
+        else:
+            reason = "未找到更优的备选路径，维持主路径。"
+
+        result = alternative if selected == "alternative" else primary
+
+        # 4) 组装分流信息（供前端/PPT 展示）
+        assignment = {
+            "enabled": True,
+            "selected": selected,
+            "reason": reason,
+            "primary": {
+                "active_users": primary_cong["active_users"],
+                "total_load": primary_cong["total_load"],
+                "congested_edges": primary_cong["congested_edges"],
+                "status": primary_cong["status"],
+                "distance": primary.total_distance,
+                "estimated_time": primary.estimated_time,
+            },
+            "alternative": {
+                "active_users": alt_cong["active_users"],
+                "total_load": alt_cong["total_load"],
+                "congested_edges": alt_cong["congested_edges"],
+                "status": alt_cong["status"],
+                "distance": alternative.total_distance if alternative.path_ids else 0.0,
+                "estimated_time": alternative.estimated_time if alternative.path_ids else 0,
+            },
+        }
+
+        return result, assignment
+
     def _get_path_between(self, start_id: int, end_id: int) -> Optional[Path]:
         """获取两个位置之间的路径对象"""
         return self.db.query(Path).filter(
